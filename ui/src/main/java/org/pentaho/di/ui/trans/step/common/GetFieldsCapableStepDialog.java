@@ -22,6 +22,7 @@
 
 package org.pentaho.di.ui.trans.step.common;
 
+import javafx.util.Pair;
 import org.apache.commons.lang.StringUtils;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.widgets.Listener;
@@ -43,6 +44,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static org.codehaus.groovy.runtime.DefaultGroovyMethods.collect;
 
 /**
  * An interface providing functionality for any step dialog that has the "get fields" capability.
@@ -92,16 +95,23 @@ public interface GetFieldsCapableStepDialog<StepMetaType extends BaseStepMeta> {
   }
 
   default List<String> getNewFieldNames( final String[] incomingFieldNames ) {
-    final Set<String> fieldNamesInTable = new HashSet<>();
-    for ( int i = 0; i < getFieldsTable().getTable().getItemCount(); i++ ) {
+    int nrItems = getFieldsTable().getTable().getItemCount();
+    final String[] fieldNamesInTable = new String[nrItems];
+    for ( int i = 0; i < nrItems; i++ ) {
       final TableItem item = getFieldsTable().getTable().getItem( i );
       int fieldNameIndex = getFieldsTable().hasIndexColumn() ? 1 : 0;
-      fieldNamesInTable.add( item.getText( fieldNameIndex ) );
+      fieldNamesInTable[i] = item.getText( fieldNameIndex );
     }
-    return Arrays
-            .stream( incomingFieldNames )
-            .filter( fieldName -> !fieldNamesInTable.contains( fieldName ) )
-            .collect( Collectors.toList() );
+
+    // If there are duplicates, it is necessary to disambiguate them
+    Set<Pair<String,Integer>> disambiguatedFieldNamesInTable = disambiguateStrings( fieldNamesInTable );
+    Set<Pair<String,Integer>> disambiguatedIncomingFieldNames = disambiguateStrings( incomingFieldNames );
+
+    return disambiguatedIncomingFieldNames
+      .stream()
+      .filter( pair -> !disambiguatedFieldNamesInTable.contains( pair ) )
+      .map( pair -> pair.getKey() )
+      .collect( Collectors.toList() );
   }
 
   /**
@@ -180,7 +190,12 @@ public interface GetFieldsCapableStepDialog<StepMetaType extends BaseStepMeta> {
   default Set<String> repopulateFields( final StepMetaType meta, final Map<String, List<String>> previousFieldValues,
                                         final boolean reloadAllFields ) {
     // incoming field names
-    final String[] incomingFieldNames = getFieldNames( meta );
+    String[] incomingFieldNames = getFieldNames( meta );
+
+    // If there are duplicates, it is necessary to disambiguate them
+    Set<Pair<String,Integer>> disambiguatedIncomingFieldNames = disambiguateStrings( incomingFieldNames );
+    incomingFieldNames = disambiguatedIncomingFieldNames.stream( ).toArray( String[]::new );
+
     final Set<String> newFieldNames = new HashSet<>();
     for ( final String incomingFieldName : incomingFieldNames ) {
       final TableItem item = new TableItem( getFieldsTable().getTable(), SWT.NONE );
@@ -207,6 +222,25 @@ public interface GetFieldsCapableStepDialog<StepMetaType extends BaseStepMeta> {
       loadRemainingFields( previousFieldValues );
     }
     return newFieldNames;
+  }
+
+  default Set<Pair<String, Integer>> disambiguateStrings( String[] incomingFieldNames ) {
+    Set<Pair<String,Integer>> disambiguatedIncomingFieldNames =
+      Arrays
+        .stream( incomingFieldNames )
+        .map( field -> new Pair<>( field, 0 ) )
+        .collect(Collectors.toSet());
+
+    if ( incomingFieldNames.length != new HashSet<>( Arrays.asList( incomingFieldNames ) ).size() ) {
+      for ( String field : incomingFieldNames ) {
+        int i = 0;
+        while(!disambiguatedIncomingFieldNames.add( new Pair<>( field, i ) )) {
+          i++;
+        }
+      }
+    }
+
+    return disambiguatedIncomingFieldNames;
   }
 
   default void loadRemainingFields( final Map<String, List<String>> previousFieldValues ) {
